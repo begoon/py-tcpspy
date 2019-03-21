@@ -48,7 +48,8 @@ class Hexify:
             await cb(self.hexify_chunk(chunk))
 
 connections_n = 0
-log_binary = False
+flag_log_binary = False
+flag_log_hexify = True
 
 def format_peer_info(peer):
     ip, port = peer.get_extra_info('peername')
@@ -82,65 +83,64 @@ async def transfer_raw_logger(conn_n, writer_stream, queue):
             queue.task_done()
 
 async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_queue, raw_logger_queue, transfer_completion_queue):
+    global flag_log_hexify
+
+    started = datetime.datetime.now()
+
     from_reader_info = format_peer_info(from_reader_stream._transport)
     to_writer_info = format_peer_info(to_writer_stream)
 
-    await logger_queue.put(f"{prefix} Transfer to {to_writer_info} started")
+    direction_prefix = f"{from_reader_info} to {to_writer_info} {prefix}"
+    await logger_queue.put(f"{direction_prefix} Transfer form {from_reader_info} to {to_writer_info} started")
 
     offset = 0
     packet_n = 0
-
-    write_exception = False
 
     hexifier = Hexify(16)
     while True:
         try:
             bytes = await from_reader_stream.read(1024*1000)
             if not bytes:
-                await logger_queue.put(f"{prefix} Reader connection is closed by remote peer {to_writer_info}")
+                await logger_queue.put(f"{direction_prefix} Reader connection from {from_reader_info} to {to_writer_info} is closed by reader")
                 break
             n = len(bytes)
-            await logger_queue.put(f"{prefix} Received ({packet_n}, {offset}) {n} byte(s) from {from_reader_info}")
-            await hexifier.hexify(bytes, logger_queue.put)
+            await logger_queue.put(f"{direction_prefix} Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
+            if flag_log_hexify:
+                await hexifier.hexify(bytes, logger_queue.put)
             if raw_logger_queue:
                 await raw_logger_queue.put(bytes)
 
             try:
                 to_writer_stream.write(bytes)
             except Exception as e:
-                write_exception = True
-                await logger_queue.put(f"{prefix} WRITE ERROR: {e}")
+                await logger_queue.put(f"{direction_prefix} WRITE ERROR: {e}")
                 break
                 
-            await logger_queue.put(f"{prefix} Sent ({packet_n}) to {to_writer_info}")
+            await logger_queue.put(f"{direction_prefix} Sent (packet {packet_n}) to {to_writer_info}")
 
             offset += n
             packet_n += 1
         except Exception as e:
-            await logger_queue.put(f"READ ERROR: {e}")
+            await logger_queue.put(f"{direction_prefix} READ ERROR: {e}")
             break
 
-    await logger_queue.put(f"{prefix} Transfer to {to_writer_info} is finished")
+    await logger_queue.put(f"{direction_prefix} Transfer is finished")
 
-    if not write_exception:
-        await logger_queue.put(f"{prefix} Draining remote connection to {to_writer_info}")
-        await to_writer_stream.drain()
-        await logger_queue.put(f"{prefix} Closing remote connection to {to_writer_info}")
-        to_writer_stream.close()
-        await logger_queue.put(f"{prefix} Waiting to close the remote connection to {to_writer_info}")
-        await to_writer_stream.wait_closed()
+    to_writer_stream.close()
+    await logger_queue.put(f"{direction_prefix} Closed writer stream to {to_writer_info}")
 
-    await logger_queue.put(f"{prefix} Closed remote connection to {to_writer_info}")
-
-    await transfer_completion_queue.put(f"Transfter to {to_writer_stream.get_extra_info('peername')} task is finished")
+    duration = datetime.datetime.now() - started
+    await transfer_completion_queue.put(f"{direction_prefix} Transfter task is finished, duration {duration}")
 
 async def process_connection(local_reader, local_writer):
-    global log_binary
+    global flag_log_binary
     global connections_n
 
     local_reader_info = format_peer_info(local_reader._transport)
     local_writer_info = format_peer_info(local_writer)
     print(f"Accepted local connection #{connections_n}: r={local_reader_info} w={local_writer_info}")
+
+    started = datetime.datetime.now()
 
     remote_host = 'speedtest.tele2.net'
     remote_port = 21
@@ -162,47 +162,52 @@ async def process_connection(local_reader, local_writer):
 
     remote_raw_logger_queue, local_raw_logger_queue = None, None
     remote_raw_logger, local_raw_logger = None, None
-    if log_binary:
+    if flag_log_binary:
         remote_raw_logger_queue = asyncio.Queue()
         local_raw_logger_queue = asyncio.Queue()
         remote_raw_logger = asyncio.create_task(transfer_raw_logger(connections_n, remote_writer, remote_raw_logger_queue))
         local_raw_logger = asyncio.create_task(transfer_raw_logger(connections_n, local_writer, local_raw_logger_queue))
 
-    local_to_remote = asyncio.create_task(stream_transfer(">>>", local_reader, remote_writer, logger_queue, remote_raw_logger_queue, transfer_completion_queue))
-    remote_to_local = asyncio.create_task(stream_transfer("<<<", remote_reader, local_writer, logger_queue, local_raw_logger_queue, transfer_completion_queue))
+    local_to_remote = asyncio.create_task(stream_transfer(">>", local_reader, remote_writer, logger_queue, remote_raw_logger_queue, transfer_completion_queue))
+    remote_to_local = asyncio.create_task(stream_transfer("<<", remote_reader, local_writer, logger_queue, local_raw_logger_queue, transfer_completion_queue))
 
+    controller_prefix = "||"
     try:
         await local_to_remote
-        await logger_queue.put(f"||| Local -> Remote transfer is awaited")
+        await logger_queue.put(f"{controller_prefix} Transfer from {local_reader_info} to {remote_writer_info} is awaited")
     except Exception as e:
-        await logger_queue.put(f"||| {e}")
-        await logger_queue.put(f"||| Local -> Remote transfer FAILED")
+        await logger_queue.put(f"{controller_prefix} {e}")
+        await logger_queue.put(f"{controller_prefix} Transfer from {local_reader_info} to {remote_writer_info} FAILED")
 
     try:
         await remote_to_local
-        await logger_queue.put(f"||| Remote -> Local transfer is awaited")
+        await logger_queue.put(f"{controller_prefix} Transfer from {remote_reader_info} to {local_writer_info} is awaited")
     except Exception as e:
-        await logger_queue.put(f"||| {e}")
-        await logger_queue.put(f"||| Remote -> Local transfer FAILED")
+        await logger_queue.put(f"{controller_prefix} {e}")
+        await logger_queue.put(f"{controller_prefix} Transfer from {remote_reader_info} to {local_writer_info} FAILED")
 
     for _ in range(2):
         ack = await transfer_completion_queue.get()
-        await logger_queue.put(f"||| {ack}")
+        await logger_queue.put(f"{controller_prefix} {ack}")
 
     if remote_raw_logger_queue:
         await remote_raw_logger_queue.put(None)
         await remote_raw_logger
-        await logger_queue.put(f"||| Remote -> Local raw logger is awaited")
+        await logger_queue.put(f"{controller_prefix} Raw logger for {remote_writer_info} is awaited")
 
     if local_raw_logger_queue:
         await local_raw_logger_queue.put(None)
         await local_raw_logger
-        await logger_queue.put(f"||| Local -> Remote raw logger is awaited")
+        await logger_queue.put(f"{controller_prefix} Raw logger for {local_writer_info} is awaited")
 
+    duration = datetime.datetime.now() - started
+    final_msg = f"Finished connection #{connections_n} from {remote_host}:{remote_port}, duration {duration}"
+
+    await logger_queue.put(final_msg)
     await logger_queue.put(None)
     await logger
 
-    print(f"Finished connection #{connections_n} from {remote_host}:{remote_port}: r={local_reader_info} w={local_writer_info}")
+    print(final_msg)
 
     connections_n += 1
 
