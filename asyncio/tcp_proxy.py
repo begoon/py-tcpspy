@@ -4,16 +4,6 @@ import datetime
 import functools
 import logging
 
-def create_logger(name):
-    formatter = logging.Formatter(fmt='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    file_handler = logging.FileHandler(name, mode='w')
-    file_handler.setFormatter(formatter)
-    logger = logging.getLogger(name)
-    logger.addHandler(file_handler)
-    logger.setLevel(logging.DEBUG)
-    logger.flush = logger.handlers[0].flush
-    return logger
-
 class Hexify:
     def __init__(self, width):
         self.printables = [self.printable(x) for x in range(256)]
@@ -39,13 +29,13 @@ class Hexify:
         dump = " ".join(map(lambda x: f"{x:02X}", chunk))
         char = "".join(map(lambda x: self.printables[x], chunk))
         self.offset += self.width
-        return "%06X: %-*s  %-*s" % (self.offset, self.width*3, dump, self.width, char)
+        return "%-19s %06X: %-*s  %-*s" % (".", self.offset, self.width*3, dump, self.width, char)
     
-    async def hexify(self, raw, cb):
+    def hexify(self, raw):
         self.reset()
-        [await cb(x) for x in self.header()]
+        [(yield x) for x in self.header()]
         for chunk in self.chunks(raw):
-            await cb(self.hexify_chunk(chunk))
+            yield self.hexify_chunk(chunk)
 
 connections_n = 0
 flag_log_binary = False
@@ -55,20 +45,24 @@ def format_peer_info(peer):
     ip, port = peer.get_extra_info('peername')
     return f"{ip}({port})"
 
+def now_prefix():
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
 async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     to_writer_info = format_peer_info(to_writer_stream)
     from_writer_info = format_peer_info(from_writer_stream)
 
     now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     log_name = f"log-{now}-{conn_n:04}-{from_writer_info}-{to_writer_info}.log"
-    log = create_logger(log_name)
-    while True:
-        msg = await queue.get()
-        if not msg:
-            break
-        log.info(msg)
-        log.flush()
-        queue.task_done()
+
+    with open(log_name, 'w') as log:
+        while True:
+            msg = await queue.get()
+            if not msg:
+                break
+            print(msg, file=log)
+            log.flush()
+            queue.task_done()
 
 async def transfer_raw_logger(conn_n, writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y.%m.%d-%H-%M-%S')
@@ -91,7 +85,11 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
     to_writer_info = format_peer_info(to_writer_stream)
 
     direction_prefix = f"{from_reader_info} to {to_writer_info} {prefix}"
-    await logger_queue.put(f"{direction_prefix} Transfer form {from_reader_info} to {to_writer_info} started")
+
+    async def log(msg):
+        await logger_queue.put(f"{now_prefix()} {direction_prefix} {msg}")
+
+    await log(f"Transfer form {from_reader_info} to {to_writer_info} started")
 
     offset = 0
     packet_n = 0
@@ -101,33 +99,34 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
         try:
             bytes = await from_reader_stream.read(1024*1000)
             if not bytes:
-                await logger_queue.put(f"{direction_prefix} Reader connection from {from_reader_info} to {to_writer_info} is closed by reader")
+                await log(f"Reader connection from {from_reader_info} to {to_writer_info} is closed by reader")
                 break
             n = len(bytes)
-            await logger_queue.put(f"{direction_prefix} Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
+            await log(f"Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
             if flag_log_hexify:
-                await hexifier.hexify(bytes, logger_queue.put)
+                hexified = '\n'.join(hexifier.hexify(bytes))
+                await logger_queue.put(hexified)
             if raw_logger_queue:
                 await raw_logger_queue.put(bytes)
 
             try:
                 to_writer_stream.write(bytes)
             except Exception as e:
-                await logger_queue.put(f"{direction_prefix} WRITE ERROR: {e}")
+                await log(f"WRITE ERROR: {e}")
                 break
                 
-            await logger_queue.put(f"{direction_prefix} Sent (packet {packet_n}) to {to_writer_info}")
+            await log(f"Sent (packet {packet_n}) to {to_writer_info}")
 
             offset += n
             packet_n += 1
         except Exception as e:
-            await logger_queue.put(f"{direction_prefix} READ ERROR: {e}")
+            await log(f"READ ERROR: {e}")
             break
 
-    await logger_queue.put(f"{direction_prefix} Transfer is finished")
+    await log(f"Transfer is finished")
 
     to_writer_stream.close()
-    await logger_queue.put(f"{direction_prefix} Closed writer stream to {to_writer_info}")
+    await log(f"Closed writer stream to {to_writer_info}")
 
     duration = datetime.datetime.now() - started
     await transfer_completion_queue.put(f"{direction_prefix} Transfter task is finished, duration {duration}")
@@ -155,8 +154,10 @@ async def process_connection(local_reader, local_writer):
     print(f"Connected to {remote_host}:{remote_port}: r={remote_reader_info} w={remote_writer_info}")
 
     logger_queue = asyncio.Queue()
-
     logger = asyncio.create_task(transfer_logger(connections_n, local_writer, remote_writer, logger_queue))
+
+    async def log(msg):
+        await logger_queue.put(f"{now_prefix()} || {msg}")
 
     transfer_completion_queue = asyncio.Queue()
 
@@ -171,39 +172,36 @@ async def process_connection(local_reader, local_writer):
     local_to_remote = asyncio.create_task(stream_transfer(">>", local_reader, remote_writer, logger_queue, remote_raw_logger_queue, transfer_completion_queue))
     remote_to_local = asyncio.create_task(stream_transfer("<<", remote_reader, local_writer, logger_queue, local_raw_logger_queue, transfer_completion_queue))
 
-    controller_prefix = "||"
     try:
         await local_to_remote
-        await logger_queue.put(f"{controller_prefix} Transfer from {local_reader_info} to {remote_writer_info} is awaited")
+        await log(f"Transfer from {local_reader_info} to {remote_writer_info} is awaited")
     except Exception as e:
-        await logger_queue.put(f"{controller_prefix} {e}")
-        await logger_queue.put(f"{controller_prefix} Transfer from {local_reader_info} to {remote_writer_info} FAILED")
+        await log(f"Transfer from {local_reader_info} to {remote_writer_info} FAILED {e}")
 
     try:
         await remote_to_local
-        await logger_queue.put(f"{controller_prefix} Transfer from {remote_reader_info} to {local_writer_info} is awaited")
+        await log(f"Transfer from {remote_reader_info} to {local_writer_info} is awaited")
     except Exception as e:
-        await logger_queue.put(f"{controller_prefix} {e}")
-        await logger_queue.put(f"{controller_prefix} Transfer from {remote_reader_info} to {local_writer_info} FAILED")
+        await log(f"Transfer from {remote_reader_info} to {local_writer_info} FAILED {e}")
 
     for _ in range(2):
         ack = await transfer_completion_queue.get()
-        await logger_queue.put(f"{controller_prefix} {ack}")
+        await log(f"{ack}")
 
     if remote_raw_logger_queue:
         await remote_raw_logger_queue.put(None)
         await remote_raw_logger
-        await logger_queue.put(f"{controller_prefix} Raw logger for {remote_writer_info} is awaited")
+        await log(f"Raw logger for {remote_writer_info} is awaited")
 
     if local_raw_logger_queue:
         await local_raw_logger_queue.put(None)
         await local_raw_logger
-        await logger_queue.put(f"{controller_prefix} Raw logger for {local_writer_info} is awaited")
+        await log(f"Raw logger for {local_writer_info} is awaited")
 
     duration = datetime.datetime.now() - started
     final_msg = f"Finished connection #{connections_n} from {remote_host}:{remote_port}, duration {duration}"
 
-    await logger_queue.put(final_msg)
+    await log(final_msg)
     await logger_queue.put(None)
     await logger
 
