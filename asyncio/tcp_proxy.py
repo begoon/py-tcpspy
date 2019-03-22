@@ -1,4 +1,6 @@
+import os
 import sys
+import getopt
 import asyncio
 import datetime
 import functools
@@ -6,6 +8,7 @@ import logging
 
 class Hexify:
     def __init__(self, width):
+        self.padding = ''.rjust(19, '.')
         self.printables = [self.printable(x) for x in range(256)]
         self.width = width
 
@@ -29,7 +32,7 @@ class Hexify:
         dump = " ".join(map(lambda x: f"{x:02X}", chunk))
         char = "".join(map(lambda x: self.printables[x], chunk))
         self.offset += self.width
-        return "%-19s %06X: %-*s  %-*s" % (".", self.offset, self.width*3, dump, self.width, char)
+        return "%s %06X: %-*s  %-*s" % (self.padding, self.offset, self.width*3, dump, self.width, char)
     
     def hexify(self, raw):
         self.reset()
@@ -37,9 +40,68 @@ class Hexify:
         for chunk in self.chunks(raw):
             yield self.hexify_chunk(chunk)
 
-connections_n = 0
-flag_log_binary = False
+exe = os.path.basename(sys.argv[0])
+usage_msg = f"""
+Usage: {exe} -l listen_port -a host -p port [-c] [-b] [-h] [-?]
+
+Options:
+  -a host         - address/host to connect
+  -p port         - remote port to connect
+  -l listen_port  - local port to listen
+  -c              - supress console output
+  -b              - suppress binary logging
+  -h              - supresss hexified data logging
+  -?              - this help
+  -v              - version
+"""
+
+def usage():
+    print(usage_msg)
+    sys.exit(1)
+
+flag_port = False
+flag_remote_host = flag_remote_port = False
+flag_listen_port = False
+
+flag_log_binary = True
 flag_log_hexify = True
+
+try:
+   opts, args = getopt.getopt(sys.argv[1:], "l:a:p:L:cbh?v")
+
+   for opt, val in opts:
+      if opt == "-l":
+         flag_listen_port = int(val)
+      elif opt == "-a":
+         flag_remote_host = val
+      elif opt == "-p":
+         flag_remote_port = int(val)
+      elif opt == "-c":
+         flag_supress_console = False
+      elif opt == "-b":
+         flag_log_binary = False
+      elif opt == "-?":
+         usage()
+      elif opt == "-v":
+         print("Python TCP/IP Spy  Version 2.00  Copyright (c) 2019 by Alexander Demin")
+         sys.exit(1)
+      else:
+         usage()
+
+   if not flag_listen_port:
+      raise Exception("listen port is not given")
+
+   if not flag_remote_host:
+      raise Exception("remote host is not given")
+
+   if not flag_remote_port:
+      raise Exception("remote port is not given")
+
+except Exception as e:
+   print(f"error: {e}\n")
+   usage()
+
+connections_n = 0
 
 def format_peer_info(peer):
     ip, port = peer.get_extra_info('peername')
@@ -141,12 +203,9 @@ async def process_connection(local_reader, local_writer):
 
     started = datetime.datetime.now()
 
-    remote_host = 'speedtest.tele2.net'
-    remote_port = 21
+    remote_host, remote_port = flag_remote_host, flag_remote_port
 
-    remote_host = "ipv4.download.thinkbroadband.com"
-    remote_port = 80
-    print(f"Connecting to {remote_host}:{remote_port}")
+    print(f"Connecting to {remote_host}:{remote_port} at {started}")
 
     remote_reader, remote_writer = await asyncio.open_connection(remote_host, remote_port)
     remote_reader_info = format_peer_info(remote_reader._transport)
@@ -210,7 +269,7 @@ async def process_connection(local_reader, local_writer):
     connections_n += 1
 
 async def main():
-    server = await asyncio.start_server(process_connection, '127.0.0.1', 8888)
+    server = await asyncio.start_server(process_connection, '0.0.0.0', flag_listen_port)
 
     addr = server.sockets[0].getsockname()
     print(f'Serving on {addr}')
