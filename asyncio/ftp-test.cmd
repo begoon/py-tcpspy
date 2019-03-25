@@ -1,0 +1,1 @@
+tcp_proxy.py -l 8888 -a speedtest.tele2.net -p 21 -b
