@@ -48,6 +48,8 @@ try:
          flag_supress_console = False
       elif opt == "-b":
          flag_log_binary = False
+      elif opt == "-h":
+         flag_log_hexify = False
       elif opt == "-?":
          usage()
       elif opt == "-v":
@@ -135,11 +137,10 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
     packet_n = 0
 
     hexifier = hexify.Hexify(16)
-    while True:
-        try:
+    try:
+        while True:
             bytes = await from_reader_stream.read(1024*1000)
             if not bytes:
-                await log(f"Reader connection from {from_reader_info} to {to_writer_info} is closed by reader")
                 break
             n = len(bytes)
             await log(f"Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
@@ -159,11 +160,10 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
 
             offset += n
             packet_n += 1
-        except Exception as e:
-            await log(f"READ ERROR: {e}")
-            break
+    except Exception as e:
+        await log(f"READ ERROR: {e}")
 
-    await log(f"Transfer is finished")
+    await log(f"Transfer is finished, reading is exhausted")
 
     to_writer_stream.close()
     await log(f"Closed writer stream to {to_writer_info}")

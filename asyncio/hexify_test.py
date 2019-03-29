@@ -8,7 +8,8 @@ header2 = "................... ------  -----------------------------------------
 def test_constructor_parameters():
     h = hexify.Hexify(16)
     assert h.width == 16
-    assert len(h.padding) == 19
+    assert len(h.padding_prefix) == 19
+    assert len(h.padding_legend) == len(h.padding_separator)
     assert isinstance(h.printables, list)
     assert len(h.printables) == 256
 
@@ -23,11 +24,17 @@ def test_hexify_empty_data():
         assert next(h)
 
 def test_hexify_data():
-    h = hexify.Hexify(16).hexify_data(b'\xAB\xCD')
-    assert next(h) == '................... 000000: AB CD                                             ..              \n'
+    h = hexify.Hexify(16).hexify_data(b'*\xAB\xCD')
+    assert next(h) == '................... 000000: 2A AB CD                                          *..             \n'
 
 def test_hexify():
     h = hexify.Hexify(16).hexify(b'\xAB\xCD')
     assert next(h) == header1
     assert next(h) == header2
     assert next(h) == '................... 000000: AB CD                                             ..              \n'
+
+def test_printable():
+    h = hexify.Hexify(16)
+    assert h.printable(0) == '.'
+    assert h.printable(32) == ' '
+    assert h.printable(255) == '.'

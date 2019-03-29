@@ -1,26 +1,26 @@
 class Hexify:
     def __init__(self, width):
-        self.padding = ''.rjust(19, '.')
-        self.printables = [self.printable(x) for x in range(256)]
         self.width = width
+        self.printables = list(map(self.printable, range(256)))
+        self.padding_prefix = '.' * 19
+        self.padding_legend = '.'.join(map("{:02X}".format, range(self.width)))
+        self.padding_separator = '-' * (self.width*3-1)
 
-    def printable(self, ch):
-       if ch < 32 or ch > 127:
-           return '.'
-       return chr(ch)
+    def printable(self, c):
+       return '.' if c < 32 or c > 127 else chr(c)
 
     def header(self):
-        yield f"{self.padding} ######  {'.'.join(map(lambda x: '%02X' % x, range(self.width)))}\n"
-        yield f"{self.padding} ------  {''.ljust(self.width*3-1, '-')}\n"
+        yield f"{self.padding_prefix} ######  {self.padding_legend}\n"
+        yield f"{self.padding_prefix} ------  {self.padding_separator}\n"
 
     def reset(self):
         self.offset = -self.width
 
     def hexify_chunk(self, chunk):
-        dump = " ".join(map(lambda x: f"{x:02X}", chunk))
+        dump = " ".join(map("{:02X}".format, chunk))
         char = "".join(map(lambda x: self.printables[x], chunk))
         self.offset += self.width
-        return "%s %06X: %-*s  %-*s\n" % (self.padding, self.offset, self.width*3, dump, self.width, char)
+        return "%s %06X: %-*s  %-*s\n" % (self.padding_prefix, self.offset, self.width*3, dump, self.width, char)
 
     def hexify_chunks(self, raw):
         for i in range(0, len(raw), self.width):
