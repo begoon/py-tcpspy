@@ -138,11 +138,7 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
 
     hexifier = hexify.Hexify(16)
     try:
-        while True:
-            bytes = await from_reader_stream.read(1024*1000)
-            if not bytes:
-                break
-            n = len(bytes)
+        async for bytes, n in from_reader_stream:
             await log(f"Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
             if flag_log_hexify:
                 hexified = hexifier.hexify(bytes)
@@ -265,5 +261,13 @@ async def main():
 
     async with server:
         await server.serve_forever()
+
+async def asyncio_fast_anext(self):
+    val = await self.read(1024*1000)
+    if val == b'':
+        raise StopAsyncIteration
+    return val, len(val)
+
+asyncio.StreamReader.__anext__ = asyncio_fast_anext
 
 asyncio.run(main())
