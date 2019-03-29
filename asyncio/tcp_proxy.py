@@ -88,35 +88,18 @@ async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     log_name = f"log-{now}-{conn_n:04}-{from_writer_info}-{to_writer_info}.log"
 
     with open(log_name, 'w') as log:
-        await log_queue_messages(queue, log)
-
-async def log_queue_messages(queue, log):
-    while True:
-        bytes = await queue.get()
-        if bytes is None:
-            queue.task_done()
-            return
-        if isinstance(bytes, str):
-            log.write(bytes)
-            log.write('\n')
-        elif isinstance(bytes, collections.abc.Iterable):
-            log.writelines(bytes)
-        queue.task_done()
+        async for line in queue:
+            if isinstance(line, str):
+                log.write(line)
+                log.write('\n')
+            elif isinstance(line, collections.abc.Iterable):
+                log.writelines(line)
     
 async def transfer_raw_logger(conn_n, writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y.%m.%d-%H-%M-%S')
     log_name = f"log-raw-{now}-{conn_n:04}-{format_peer_info(writer_stream)}.log"
     with open(log_name, 'wb') as log:
-        await raw_log_queue_messages(queue, log)
-
-async def raw_log_queue_messages(queue, log):
-    while True:
-        bytes = await queue.get()
-        if bytes is None:
-            queue.task_done()
-            return
-        log.write(bytes)
-        queue.task_done()
+        [await log.write(bytes) for bytes in queue]
     
 async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_queue, raw_logger_queue, transfer_completion_queue):
     global flag_log_hexify
@@ -225,7 +208,7 @@ async def process_connection(local_reader, local_writer):
     ack = await transfer_completion_queue.get()
     await log(f"{ack}")
 
-    async def wraupup_logger(queue, logger, logger_name, trace=True):
+    async def wrapup_logger(queue, logger, logger_name, trace=True):
         prefix = f"Awaiting {logger_name}:"
         await log(f"{prefix} put 'None' to the queue")
         await queue.put(None)
@@ -239,17 +222,17 @@ async def process_connection(local_reader, local_writer):
             await log(f"{prefix} awaited")
 
     if remote_raw_logger_queue:
-        await wraupup_logger(remote_raw_logger_queue, remote_raw_logger, f"raw logger for {remote_writer_info}")
+        await wrapup_logger(remote_raw_logger_queue, remote_raw_logger, f"raw logger for {remote_writer_info}")
 
     if local_raw_logger_queue:
-        await wraupup_logger(local_raw_logger_queue, local_raw_logger, f"raw logger for {local_writer_info}")
+        await wrapup_logger(local_raw_logger_queue, local_raw_logger, f"raw logger for {local_writer_info}")
 
     duration = datetime.datetime.now() - started
     final_msg = f"Finished connection #{current_connection_n} from {remote_host}:{remote_port}, duration {duration}"
 
     await log(final_msg)
 
-    await wraupup_logger(logger_queue, logger, f"hexify logger", False)
+    await wrapup_logger(logger_queue, logger, f"hexify logger", False)
 
     print(final_msg)
 
@@ -262,12 +245,27 @@ async def main():
     async with server:
         await server.serve_forever()
 
-async def asyncio_fast_anext(self):
+# Experimental monkey patching for async iterators.
+
+async def asyncio_streamreader_fast_anext(self):
     val = await self.read(1024*1000)
     if val == b'':
         raise StopAsyncIteration
     return val, len(val)
 
-asyncio.StreamReader.__anext__ = asyncio_fast_anext
+def asyncio_queue_aiter(self):
+    return self
+
+async def asyncio_queue_anext(self):
+    msg = await self.get()
+    if msg is None:
+        raise StopAsyncIteration
+    self.task_done()
+    return msg
+
+asyncio.Queue.__aiter__ = asyncio_queue_aiter
+asyncio.Queue.__anext__ = asyncio_queue_anext
+
+asyncio.StreamReader.__anext__ = asyncio_streamreader_fast_anext
 
 asyncio.run(main())
