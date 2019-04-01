@@ -7,7 +7,7 @@ class Hexify:
         self.padding_separator = '-' * (self.width*3-1)
 
     def printable(self, c):
-       return '.' if c < 32 or c > 127 else chr(c)
+       return chr(c) if 32 <= c < 128 else '.'
 
     def header(self):
         yield f"{self.padding_prefix} ######  {self.padding_legend}\n"
