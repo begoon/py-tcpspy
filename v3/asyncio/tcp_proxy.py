@@ -258,9 +258,9 @@ def asyncio_queue_aiter(self):
 
 async def asyncio_queue_anext(self):
     msg = await self.get()
+    self.task_done()
     if msg is None:
         raise StopAsyncIteration
-    self.task_done()
     return msg
 
 asyncio.Queue.__aiter__ = asyncio_queue_aiter
