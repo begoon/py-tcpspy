@@ -5,6 +5,7 @@ import asyncio
 import datetime
 import functools
 import collections.abc
+import threading
 
 import hexify
 
@@ -84,8 +85,10 @@ async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     to_writer_info = format_peer_info(to_writer_stream)
     from_writer_info = format_peer_info(from_writer_stream)
 
+    thread_id = threading.get_ident()
+
     now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    log_name = f"log-{now}-{conn_n:04}-{from_writer_info}-{to_writer_info}.log"
+    log_name = f"log-{now}-{conn_n:04}.{thread_id}-{from_writer_info}-{to_writer_info}.log"
 
     hexifier = hexify.Hexify(16)
 
@@ -99,7 +102,8 @@ async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     
 async def transfer_raw_logger(conn_n, writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y.%m.%d-%H-%M-%S')
-    log_name = f"log-raw-{now}-{conn_n:04}-{format_peer_info(writer_stream)}.log"
+    thread_id = threading.get_ident()
+    log_name = f"log-raw-{now}-{conn_n:04}.{thread_id}-{format_peer_info(writer_stream)}.log"
     with open(log_name, 'wb') as log:
         [await log.write(bytes) for bytes in queue]
     
@@ -116,7 +120,8 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
     async def log(msg):
         await logger_queue.put(f"{now_prefix()} {direction_prefix} {msg}")
 
-    await log(f"Transfer form {from_reader_info} to {to_writer_info} started")
+    thread_id = threading.get_ident()
+    await log(f"Transfer ({thread_id}) form {from_reader_info} to {to_writer_info} started")
 
     offset = 0
     packet_n = 0
@@ -154,22 +159,24 @@ async def process_connection(local_reader, local_writer):
     global flag_log_binary
     global connections_n
 
+    thread_id = threading.get_ident()
+
     current_connection_n, connections_n = connections_n, connections_n + 1
 
     local_reader_info = format_peer_info(local_reader._transport)
     local_writer_info = format_peer_info(local_writer)
-    print(f"Accepted local connection #{current_connection_n}: r={local_reader_info} w={local_writer_info}")
+    print(f"Accepted local connection #{current_connection_n}.{thread_id}: r={local_reader_info} w={local_writer_info}")
 
     started = datetime.datetime.now()
 
     remote_host, remote_port = flag_remote_host, flag_remote_port
 
-    print(f"Connecting #{current_connection_n} to {remote_host}:{remote_port} at {started}")
+    print(f"Connecting #{current_connection_n}.{thread_id} to {remote_host}:{remote_port} at {started}")
 
     remote_reader, remote_writer = await asyncio.open_connection(remote_host, remote_port)
     remote_reader_info = format_peer_info(remote_reader._transport)
     remote_writer_info = format_peer_info(remote_writer)
-    print(f"Connected #{current_connection_n} to {remote_host}:{remote_port}: r={remote_reader_info} w={remote_writer_info}")
+    print(f"Connected #{current_connection_n}.{thread_id} to {remote_host}:{remote_port}: r={remote_reader_info} w={remote_writer_info}")
 
     logger_queue = asyncio.Queue()
     logger = asyncio.create_task(transfer_logger(current_connection_n, local_writer, remote_writer, logger_queue))
@@ -228,7 +235,7 @@ async def process_connection(local_reader, local_writer):
         await wrapup_logger(local_raw_logger_queue, local_raw_logger, f"raw logger for {local_writer_info}")
 
     duration = datetime.datetime.now() - started
-    final_msg = f"Finished connection #{current_connection_n} from {remote_host}:{remote_port}, duration {duration}"
+    final_msg = f"Finished connection #{current_connection_n}.{thread_id} from {remote_host}:{remote_port}, duration {duration}"
 
     await log(final_msg)
 
