@@ -5,6 +5,7 @@ class Hexify:
         self.padding_prefix = '.' * 19
         self.padding_legend = '.'.join(map("{:02X}".format, range(self.width)))
         self.padding_separator = '-' * (self.width*3-1)
+        self.hex = list(map("{:02X} ".format, range(256)))
 
     def printable(self, c):
        return chr(c) if 32 <= c < 128 else '.'
@@ -17,7 +18,7 @@ class Hexify:
         self.offset = -self.width
 
     def hexify_chunk(self, chunk):
-        dump = " ".join(map("{:02X}".format, chunk))
+        dump = "".join(map(lambda x: self.hex[x], chunk))
         char = "".join(map(lambda x: self.printables[x], chunk))
         self.offset += self.width
         return "%s %06X: %-*s  %-*s\n" % (self.padding_prefix, self.offset, self.width*3, dump, self.width, char)

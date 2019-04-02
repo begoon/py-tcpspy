@@ -235,6 +235,7 @@ async def process_connection(local_reader, local_writer):
     await wrapup_logger(logger_queue, logger, f"hexify logger", False)
 
     print(final_msg)
+    exit(0)
 
 async def main():
     server = await asyncio.start_server(process_connection, '0.0.0.0', flag_listen_port)
