@@ -87,13 +87,15 @@ async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     log_name = f"log-{now}-{conn_n:04}-{from_writer_info}-{to_writer_info}.log"
 
+    hexifier = hexify.Hexify(16)
+
     with open(log_name, 'w') as log:
         async for line in queue:
             if isinstance(line, str):
                 log.write(line)
                 log.write('\n')
-            elif isinstance(line, collections.abc.Iterable):
-                log.writelines(line)
+            elif isinstance(line, bytes):
+                log.writelines(hexifier.hexify(line))
     
 async def transfer_raw_logger(conn_n, writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y.%m.%d-%H-%M-%S')
@@ -119,13 +121,11 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
     offset = 0
     packet_n = 0
 
-    hexifier = hexify.Hexify(16)
     try:
         async for bytes, n in from_reader_stream:
             await log(f"Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
             if flag_log_hexify:
-                hexified = hexifier.hexify(bytes)
-                await logger_queue.put(hexified)
+                await logger_queue.put(bytes)
             if raw_logger_queue:
                 await raw_logger_queue.put(bytes)
 
@@ -235,7 +235,6 @@ async def process_connection(local_reader, local_writer):
     await wrapup_logger(logger_queue, logger, f"hexify logger", False)
 
     print(final_msg)
-    exit(0)
 
 async def main():
     server = await asyncio.start_server(process_connection, '0.0.0.0', flag_listen_port)
