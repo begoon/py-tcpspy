@@ -1,5 +1,5 @@
 language: python
-script: pytest
+script: pytest -v ./v3/asyncio
 notifications:
   email:
     recipients:
