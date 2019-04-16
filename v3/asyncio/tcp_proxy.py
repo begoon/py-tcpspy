@@ -93,19 +93,21 @@ async def transfer_logger(conn_n, from_writer_stream, to_writer_stream, queue):
     hexifier = hexify.Hexify(16)
 
     with open(log_name, 'w') as log:
-        async for line in queue:
-            if isinstance(line, str):
-                log.write(line)
+        async for msg in queue:
+            if isinstance(msg, str):
+                log.write(msg)
                 log.write('\n')
-            elif isinstance(line, bytes):
-                log.writelines(hexifier.hexify(line))
+            elif isinstance(msg, list):
+                bytes, offset = msg
+                log.writelines(hexifier.hexify(bytes, offset))
     
 async def transfer_raw_logger(conn_n, writer_stream, queue):
     now = datetime.datetime.now().strftime('%Y.%m.%d-%H-%M-%S')
     thread_id = threading.get_ident()
     log_name = f"log-raw-{now}-{conn_n:04}.{thread_id}-{format_peer_info(writer_stream)}.log"
     with open(log_name, 'wb') as log:
-        [await log.write(bytes) for bytes in queue]
+        async for msg in queue:
+            log.write(msg)
     
 async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_queue, raw_logger_queue, transfer_completion_queue):
     global flag_log_hexify
@@ -130,7 +132,7 @@ async def stream_transfer(prefix, from_reader_stream, to_writer_stream, logger_q
         async for bytes, n in from_reader_stream:
             await log(f"Received (packet {packet_n}, offset {offset}) {n} byte(s) from {from_reader_info}")
             if flag_log_hexify:
-                await logger_queue.put(bytes)
+                await logger_queue.put([bytes, offset])
             if raw_logger_queue:
                 await raw_logger_queue.put(bytes)
 
