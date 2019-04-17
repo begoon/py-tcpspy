@@ -28,7 +28,6 @@ def usage():
     print(usage_msg)
     sys.exit(1)
 
-flag_port = False
 flag_remote_host = flag_remote_port = False
 flag_listen_port = False
 
