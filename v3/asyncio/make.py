@@ -21,11 +21,8 @@ def all_f():
 def usage():
     [print(cmd) for cmd in globals() if cmd.endswith('_f')]
 
-args = sys.argv[1:]
-print(args)
-
-if not args: usage()
-
-for cmd in args:
+for cmd in sys.argv[1:]:
     print(cmd)
     globals()[f"{cmd}_f"]()
+else:
+    usage()
