@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import datetime
 
 def run(cmd: str):
     print(f"@ {cmd}")
@@ -22,7 +23,9 @@ def usage():
     [print(cmd) for cmd in globals() if cmd.endswith('_f')]
 
 for cmd in sys.argv[1:]:
+    started = datetime.datetime.now()
     print(cmd)
     globals()[f"{cmd}_f"]()
+    print(">", f"{datetime.datetime.now() - started}")
 else:
     usage()
