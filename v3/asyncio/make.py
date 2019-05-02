@@ -18,6 +18,9 @@ def test_f():
 def all_f(): 
     build_f()
     test_f()
+
+def curl50_f():
+    run('curl --output /dev/null http://127.0.0.1:8888/50MB.zip')
     
 def usage():
     [print(cmd) for cmd in globals() if cmd.endswith('_f')]
@@ -27,5 +30,6 @@ for cmd in sys.argv[1:]:
     print(cmd)
     globals()[f"{cmd}_f"]()
     print(">", f"{datetime.datetime.now() - started}")
-else:
+
+if len(sys.argv) < 2:
     usage()
