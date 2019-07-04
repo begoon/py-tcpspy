@@ -6,6 +6,7 @@ class Hexify:
         self.padding_separator = '-' * (self.width * 3 - 1)
         self.hex = list(map("{:02X} ".format, range(256)))
         self.hex16 = list(map("{:04X}".format, range(0x10000)))
+        self.hex16_ = dict([(i, "{:04X}".format(i)) for i in range(0x10000)])
 
     def printable(self, c):
         return chr(c) if 32 <= c < 128 else '.'
